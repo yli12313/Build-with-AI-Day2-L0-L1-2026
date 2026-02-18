@@ -35,9 +35,40 @@ if [ -s "$PROJECT_FILE" ]; then
     fi
 fi
 
-# If no valid existing project was found, start the interactive creation process
+# If no valid project_id.txt, check currently active gcloud project
 if [ "$PROJECT_ID_SET" = false ]; then
-    echo "--- Creating and Setting New Google Cloud Project ID ---"
+    ACTIVE_PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+    if [ "$ACTIVE_PROJECT_ID" = "(unset)" ]; then ACTIVE_PROJECT_ID=""; fi
+
+    if [ -n "$ACTIVE_PROJECT_ID" ]; then
+        echo "Detected currently active project: $ACTIVE_PROJECT_ID"
+        if gcloud projects describe "$ACTIVE_PROJECT_ID" --quiet >/dev/null 2>&1; then
+            echo "Verified '$ACTIVE_PROJECT_ID' access. Using it."
+            FINAL_PROJECT_ID="$ACTIVE_PROJECT_ID"
+            PROJECT_ID_SET=true
+        else
+            echo "Warning: Active project '$ACTIVE_PROJECT_ID' is not accessible."
+        fi
+    fi
+fi
+
+# Search for an existing waybackhome-* project
+if [ "$PROJECT_ID_SET" = false ]; then
+    echo "Searching for existing waybackhome project..."
+    FOUND_PROJECT=$(gcloud projects list --filter="projectId:waybackhome-*" --format="value(projectId)" --sort-by=~createTime --limit=1 2>/dev/null)
+
+    if [ -n "$FOUND_PROJECT" ]; then
+        echo "✓ Found existing project: $FOUND_PROJECT"
+        FINAL_PROJECT_ID="$FOUND_PROJECT"
+        PROJECT_ID_SET=true
+        gcloud config set project "$FINAL_PROJECT_ID" --quiet 2>/dev/null
+        echo "$FINAL_PROJECT_ID" > "$PROJECT_FILE"
+    fi
+fi
+
+# Last resort: offer to create a new project or enter an existing one
+if [ "$PROJECT_ID_SET" = false ]; then
+    echo "--- No existing waybackhome project found. Let's set one up. ---"
     CODELAB_PROJECT_PREFIX="waybackhome"
 
     # Dynamic Length Calculation

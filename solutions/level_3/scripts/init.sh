@@ -38,10 +38,41 @@ if [ -s "$PROJECT_FILE" ]; then
     fi
 fi
 
-# If no valid existing project was found, start the interactive creation process
+# If no valid project_id.txt, check currently active gcloud project
 if [ "$PROJECT_ID_SET" = false ]; then
-    echo "--- Creating and Setting New Google Cloud Project ID ---"
-    CODELAB_PROJECT_PREFIX="wbh-level3"
+    ACTIVE_PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+    if [ "$ACTIVE_PROJECT_ID" = "(unset)" ]; then ACTIVE_PROJECT_ID=""; fi
+
+    if [ -n "$ACTIVE_PROJECT_ID" ]; then
+        echo "Detected currently active project: $ACTIVE_PROJECT_ID"
+        if gcloud projects describe "$ACTIVE_PROJECT_ID" --quiet >/dev/null 2>&1; then
+            echo "Verified '$ACTIVE_PROJECT_ID' access. Using it."
+            FINAL_PROJECT_ID="$ACTIVE_PROJECT_ID"
+            PROJECT_ID_SET=true
+        else
+            echo "Warning: Active project '$ACTIVE_PROJECT_ID' is not accessible."
+        fi
+    fi
+fi
+
+# Search for an existing waybackhome-* project
+if [ "$PROJECT_ID_SET" = false ]; then
+    echo "Searching for existing waybackhome project..."
+    FOUND_PROJECT=$(gcloud projects list --filter="projectId:waybackhome-*" --format="value(projectId)" --sort-by=~createTime --limit=1 2>/dev/null)
+
+    if [ -n "$FOUND_PROJECT" ]; then
+        echo "✓ Found existing project: $FOUND_PROJECT"
+        FINAL_PROJECT_ID="$FOUND_PROJECT"
+        PROJECT_ID_SET=true
+        gcloud config set project "$FINAL_PROJECT_ID" --quiet 2>/dev/null
+        echo "$FINAL_PROJECT_ID" > "$PROJECT_FILE"
+    fi
+fi
+
+# Last resort: offer to create a new project or enter an existing one
+if [ "$PROJECT_ID_SET" = false ]; then
+    echo "--- No existing waybackhome project found. Let's set one up. ---"
+    CODELAB_PROJECT_PREFIX="waybackhome"
 
     # Dynamic Length Calculation
     PREFIX_LEN=${#CODELAB_PROJECT_PREFIX}
@@ -50,33 +81,45 @@ if [ "$PROJECT_ID_SET" = false ]; then
     fi
     MAX_SUFFIX_LEN=$(( 30 - PREFIX_LEN - 1 ))
 
-    # Loop until a project is successfully created.
+    # Loop until a project is successfully created or selected
     while true; do
       RANDOM_SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c "$MAX_SUFFIX_LEN")
       SUGGESTED_PROJECT_ID="${CODELAB_PROJECT_PREFIX}-${RANDOM_SUFFIX}"
 
-      read -p "Enter project ID or press Enter to use default: " -e -i "$SUGGESTED_PROJECT_ID" FINAL_PROJECT_ID
+      echo ""
+      echo "Select a Project ID:"
+      echo "  1. Press Enter to CREATE a new project: $SUGGESTED_PROJECT_ID"
+      echo "  2. Or type an existing Project ID to use."
+      read -p "Project ID: " USER_INPUT
+
+      FINAL_PROJECT_ID="${USER_INPUT:-$SUGGESTED_PROJECT_ID}"
 
       if [[ -z "$FINAL_PROJECT_ID" ]]; then
           echo "Project ID cannot be empty. Please try again."
           continue
       fi
 
-      echo "Attempting to create project with ID: $FINAL_PROJECT_ID"
-      ERROR_OUTPUT=$(gcloud projects create "$FINAL_PROJECT_ID" --quiet 2>&1)
-      CREATE_STATUS=$?
+      echo "Checking status of '$FINAL_PROJECT_ID'..."
 
-      if [[ $CREATE_STATUS -eq 0 ]]; then
-        echo "Successfully created project: $FINAL_PROJECT_ID"
+      # Check if exists/accessible
+      if gcloud projects describe "$FINAL_PROJECT_ID" >/dev/null 2>&1; then
+        echo "Project '$FINAL_PROJECT_ID' exists and is accessible."
         gcloud config set project "$FINAL_PROJECT_ID" || handle_error "Failed to set active project to $FINAL_PROJECT_ID."
-        echo "Set active gcloud project to $FINAL_PROJECT_ID."
         echo "$FINAL_PROJECT_ID" > "$PROJECT_FILE" || handle_error "Failed to save project ID to $PROJECT_FILE."
         echo "Successfully saved project ID to $PROJECT_FILE."
         break
       else
-        echo "Could not create project '$FINAL_PROJECT_ID'."
-        echo "Reason from gcloud: $ERROR_OUTPUT"
-        echo -e "This ID may be taken. Please try a different project ID.\n"
+        # Try to create it
+        echo "Project '$FINAL_PROJECT_ID' not found. Attempting to create..."
+        if gcloud projects create "$FINAL_PROJECT_ID" --quiet; then
+          echo "Successfully created project: $FINAL_PROJECT_ID"
+          gcloud config set project "$FINAL_PROJECT_ID" || handle_error "Failed to set active project to $FINAL_PROJECT_ID."
+          echo "$FINAL_PROJECT_ID" > "$PROJECT_FILE" || handle_error "Failed to save project ID to $PROJECT_FILE."
+          echo "Successfully saved project ID to $PROJECT_FILE."
+          break
+        else
+          echo "Failed to create '$FINAL_PROJECT_ID'. Please try a different ID."
+        fi
       fi
     done
 fi

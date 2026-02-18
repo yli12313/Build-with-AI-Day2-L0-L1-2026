@@ -47,7 +47,21 @@ if [ "$PROJECT_ID_SET" = false ]; then
     fi
 fi
 
-# 2. If no project selected yet (User said No or No active project found)
+# Search for an existing waybackhome-* project
+if [ "$PROJECT_ID_SET" = false ]; then
+    echo "Searching for existing waybackhome project..."
+    FOUND_PROJECT=$(gcloud projects list --filter="projectId:waybackhome-*" --format="value(projectId)" --sort-by=~createTime --limit=1 2>/dev/null)
+
+    if [ -n "$FOUND_PROJECT" ]; then
+        echo "✓ Found existing project: $FOUND_PROJECT"
+        FINAL_PROJECT_ID="$FOUND_PROJECT"
+        PROJECT_ID_SET=true
+        gcloud config set project "$FINAL_PROJECT_ID" --quiet 2>/dev/null
+        echo "$FINAL_PROJECT_ID" > "$PROJECT_FILE"
+    fi
+fi
+
+# Last resort: if no project found, offer to create or enter one
 if [ "$PROJECT_ID_SET" = false ]; then
     # Generate a random default ID
     CODELAB_PROJECT_PREFIX="waybackhome"
